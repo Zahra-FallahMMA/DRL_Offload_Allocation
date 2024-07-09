@@ -1,6 +1,30 @@
 import random
+import numpy as np
 from collections import deque, defaultdict
 from graphviz import Digraph
+
+class QLearningAgent:
+    def __init__(self, state_size, action_size, learning_rate=0.1, discount_factor=0.95, exploration_rate=1.0, exploration_decay=0.995, exploration_min=0.01):
+        self.state_size = state_size
+        self.action_size = action_size
+        self.learning_rate = learning_rate
+        self.discount_factor = discount_factor
+        self.exploration_rate = exploration_rate
+        self.exploration_decay = exploration_decay
+        self.exploration_min = exploration_min
+        self.q_table = defaultdict(lambda: np.zeros(action_size))
+
+    def choose_action(self, state):
+        if np.random.rand() <= self.exploration_rate:
+            return random.randrange(self.action_size)
+        q_values = self.q_table[state]
+        return np.argmax(q_values)
+
+    def learn(self, state, action, reward, next_state):
+        q_update = reward + self.discount_factor * np.max(self.q_table[next_state])
+        self.q_table[state][action] += self.learning_rate * (q_update - self.q_table[state][action])
+        if self.exploration_rate > self.exploration_min:
+            self.exploration_rate *= self.exploration_decay
 
 class Task:
     def __init__(self, id, instructions):
@@ -45,6 +69,8 @@ class Simulation:
         self.total_cost = 0
         self.workflows = []
         self.ready_tasks = defaultdict(deque)
+        self.iot_agent = QLearningAgent(state_size=2, action_size=2)  # State: [current_cost, current_delay], Actions: [execute, offload]
+        self.broker_agent = QLearningAgent(state_size=2, action_size=2)  # State: [current_cost, current_delay], Actions: [fog, server]
 
     def add_workflow(self, workflow):
         self.workflows.append(workflow)
@@ -90,21 +116,33 @@ class Simulation:
 
                 task = self.ready_tasks[device_id].popleft()
                 print(f"Task {task.id} is being processed on {device_id}")
+                # State for the IoT agent: [current total cost, current total delay]
+                state = (self.total_cost, self.total_delay)
                 # Decide if the task is executed on IoT or offloaded
-                if random.choice([True, False]):  # 50% chance to execute on IoT
+                action = self.iot_agent.choose_action(state)
+                if action == 0:  # Execute on IoT
                     iot_device = next(device for device in self.iot_devices if device.id == device_id)
                     self.execute_task(task, iot_device, comm_delay=0)
+                    reward = -task.execution_time  # Reward based on execution time
+                    self.iot_agent.learn(state, action, reward, (self.total_cost, self.total_delay))
                     self.check_ready_tasks(task, device_id)
-                else:
+                else:  # Offload
                     # Offload the task to broker
                     broker_delay = 10  # Communication delay between IoT and Broker in ms
-                    if random.choice([True, False]):  # 50% chance to go to Fog or Server
+                    broker_state = (self.total_cost, self.total_delay)
+                    broker_action = self.broker_agent.choose_action(broker_state)
+                    if broker_action == 0:  # Execute on Fog
                         fog_device = random.choice(self.fog_devices)
                         self.execute_task(task, fog_device, comm_delay=broker_delay + 100)  # Adding delay between Broker and Fog in ms
-                    else:
+                        reward = -task.execution_time - task.cost  # Reward based on execution time and cost
+                        self.broker_agent.learn(broker_state, broker_action, reward, (self.total_cost, self.total_delay))
+                    else:  # Execute on Server
                         server_device = random.choice(self.server_devices)
                         self.execute_task(task, server_device, comm_delay=broker_delay + 300)  # Adding delay between Broker and Server in ms
+                        reward = -task.execution_time - task.cost  # Reward based on execution time and cost
+                        self.broker_agent.learn(broker_state, broker_action, reward, (self.total_cost, self.total_delay))
                     self.check_ready_tasks(task, device_id)
+                    self.iot_agent.learn(state, action, reward, (self.total_cost, self.total_delay))
 
         print(f"Total Delay: {self.total_delay:.2f} seconds")
         print(f"Total Cost: ${self.total_cost:.2f}")
