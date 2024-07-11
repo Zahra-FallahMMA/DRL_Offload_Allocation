@@ -1,10 +1,16 @@
+import os
+os.environ["PATH"] += os.pathsep + "C:/Program Files (x86)/Graphviz-11.0.0-win64/bin"
 import random
 import numpy as np
 from collections import deque, defaultdict
 from graphviz import Digraph
+import tensorflow as tf
+from tensorflow.python.keras.models import Sequential
+from tensorflow.python.keras.layers import Dense
+from tensorflow.python.keras.optimizers import adam_v2
 
-class QLearningAgent:
-    def __init__(self, state_size, action_size, learning_rate=0.1, discount_factor=0.95, exploration_rate=1.0, exploration_decay=0.995, exploration_min=0.01):
+class DQNAgent:
+    def __init__(self, state_size, action_size, learning_rate=0.001, discount_factor=0.95, exploration_rate=1.0, exploration_decay=0.995, exploration_min=0.01, memory_size=2000, batch_size=64):
         self.state_size = state_size
         self.action_size = action_size
         self.learning_rate = learning_rate
@@ -12,17 +18,38 @@ class QLearningAgent:
         self.exploration_rate = exploration_rate
         self.exploration_decay = exploration_decay
         self.exploration_min = exploration_min
-        self.q_table = defaultdict(lambda: np.zeros(action_size))
+        self.memory = deque(maxlen=memory_size)
+        self.batch_size = batch_size
+        self.model = self._build_model()
+
+    def _build_model(self):
+        model = Sequential()
+        model.add(Dense(24, input_dim=self.state_size, activation='relu'))
+        model.add(Dense(24, activation='relu'))
+        model.add(Dense(self.action_size, activation='linear'))
+        model.compile(loss='mse', optimizer=adam_v2.Adam(learning_rate=self.learning_rate))
+        return model
+
+    def remember(self, state, action, reward, next_state, done):
+        self.memory.append((state, action, reward, next_state, done))
 
     def choose_action(self, state):
         if np.random.rand() <= self.exploration_rate:
             return random.randrange(self.action_size)
-        q_values = self.q_table[state]
-        return np.argmax(q_values)
+        q_values = self.model.predict(np.array([state]), verbose=0)
+        return np.argmax(q_values[0])
 
-    def learn(self, state, action, reward, next_state):
-        q_update = reward + self.discount_factor * np.max(self.q_table[next_state])
-        self.q_table[state][action] += self.learning_rate * (q_update - self.q_table[state][action])
+    def replay(self):
+        if len(self.memory) < self.batch_size:
+            return
+        minibatch = random.sample(self.memory, self.batch_size)
+        for state, action, reward, next_state, done in minibatch:
+            target = reward
+            if not done:
+                target += self.discount_factor * np.amax(self.model.predict(np.array([next_state]), verbose=0)[0])
+            target_f = self.model.predict(np.array([state]), verbose=0)
+            target_f[0][action] = target
+            self.model.fit(np.array([state]), target_f, epochs=1, verbose=0)
         if self.exploration_rate > self.exploration_min:
             self.exploration_rate *= self.exploration_decay
 
@@ -69,8 +96,8 @@ class Simulation:
         self.total_cost = 0
         self.workflows = []
         self.ready_tasks = defaultdict(deque)
-        self.iot_agent = QLearningAgent(state_size=2, action_size=2)  # State: [current_cost, current_delay], Actions: [execute, offload]
-        self.broker_agent = QLearningAgent(state_size=2, action_size=2)  # State: [current_cost, current_delay], Actions: [fog, server]
+        self.iot_agent = DQNAgent(state_size=2, action_size=2)  # State: [current_cost, current_delay], Actions: [execute, offload]
+        self.broker_agent = DQNAgent(state_size=2, action_size=2)  # State: [current_cost, current_delay], Actions: [fog, server]
 
     def add_workflow(self, workflow):
         self.workflows.append(workflow)
@@ -124,7 +151,9 @@ class Simulation:
                     iot_device = next(device for device in self.iot_devices if device.id == device_id)
                     self.execute_task(task, iot_device, comm_delay=0)
                     reward = -task.execution_time  # Reward based on execution time
-                    self.iot_agent.learn(state, action, reward, (self.total_cost, self.total_delay))
+                    next_state = (self.total_cost, self.total_delay)
+                    self.iot_agent.remember(state, action, reward, next_state, False)
+                    self.iot_agent.replay()
                     self.check_ready_tasks(task, device_id)
                 else:  # Offload
                     # Offload the task to broker
@@ -135,14 +164,19 @@ class Simulation:
                         fog_device = random.choice(self.fog_devices)
                         self.execute_task(task, fog_device, comm_delay=broker_delay + 100)  # Adding delay between Broker and Fog in ms
                         reward = -task.execution_time - task.cost  # Reward based on execution time and cost
-                        self.broker_agent.learn(broker_state, broker_action, reward, (self.total_cost, self.total_delay))
+                        next_state = (self.total_cost, self.total_delay)
+                        self.broker_agent.remember(broker_state, broker_action, reward, next_state, False)
+                        self.broker_agent.replay()
                     else:  # Execute on Server
                         server_device = random.choice(self.server_devices)
                         self.execute_task(task, server_device, comm_delay=broker_delay + 300)  # Adding delay between Broker and Server in ms
                         reward = -task.execution_time - task.cost  # Reward based on execution time and cost
-                        self.broker_agent.learn(broker_state, broker_action, reward, (self.total_cost, self.total_delay))
+                        next_state = (self.total_cost, self.total_delay)
+                        self.broker_agent.remember(broker_state, broker_action, reward, next_state, False)
+                        self.broker_agent.replay()
                     self.check_ready_tasks(task, device_id)
-                    self.iot_agent.learn(state, action, reward, (self.total_cost, self.total_delay))
+                    self.iot_agent.remember(state, action, reward, (self.total_cost, self.total_delay), False)
+                    self.iot_agent.replay()
 
         print(f"Total Delay: {self.total_delay:.2f} seconds")
         print(f"Total Cost: ${self.total_cost:.2f}")
