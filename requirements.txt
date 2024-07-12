@@ -1,2 +1,3 @@
 graphviz
 numpy
+tensorflow
