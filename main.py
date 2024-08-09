@@ -8,8 +8,7 @@ from keras.optimizers import Adam
 from itertools import product
 
 class DQNAgent:
-    def __init__(self, state_size, action_size, learning_rate=0.001, discount_factor=0.95, exploration_rate=1.0,
-                 exploration_decay=0.995, exploration_min=0.01, batch_size=64, memory_size=2000):
+    def __init__(self, state_size, action_size, learning_rate=0.001, discount_factor=0.95, exploration_rate=1.0, exploration_decay=0.995, exploration_min=0.01, batch_size=64, memory_size=2000):
         self.state_size = state_size
         self.action_size = action_size
         self.learning_rate = learning_rate
@@ -93,8 +92,7 @@ class Device:
         self.cost_per_hour = cost_per_hour
 
 class Simulation:
-    def __init__(self, num_iot, num_fog, num_server, learning_rate=0.001, discount_factor=0.95,
-                 exploration_rate=1.0, exploration_decay=0.995, exploration_min=0.01, batch_size=64, memory_size=2000):
+    def __init__(self, num_iot, num_fog, num_server, learning_rate=0.001, discount_factor=0.95, exploration_rate=1.0, exploration_decay=0.995, exploration_min=0.01, batch_size=64, memory_size=2000):
         self.num_iot = num_iot
         self.num_fog = num_fog
         self.num_server = num_server
@@ -115,12 +113,8 @@ class Simulation:
         self.total_cost = 0
         self.workflows = []
         self.ready_tasks = defaultdict(deque)
-        self.iot_agent = DQNAgent(state_size=3, action_size=2, learning_rate=self.learning_rate, discount_factor=self.discount_factor,
-                                  exploration_rate=self.exploration_rate, exploration_decay=self.exploration_decay,
-                                  exploration_min=self.exploration_min, batch_size=self.batch_size, memory_size=self.memory_size)
-        self.broker_agent = DQNAgent(state_size=4, action_size=2, learning_rate=self.learning_rate, discount_factor=self.discount_factor,
-                                     exploration_rate=self.exploration_rate, exploration_decay=self.exploration_decay,
-                                     exploration_min=self.exploration_min, batch_size=self.batch_size, memory_size=self.memory_size)
+        self.iot_agent = DQNAgent(state_size=3, action_size=2, learning_rate=self.learning_rate, discount_factor=self.discount_factor, exploration_rate=self.exploration_rate, exploration_decay=self.exploration_decay, exploration_min=self.exploration_min, batch_size=self.batch_size, memory_size=self.memory_size)
+        self.broker_agent = DQNAgent(state_size=4, action_size=2, learning_rate=self.learning_rate, discount_factor=self.discount_factor, exploration_rate=self.exploration_rate, exploration_decay=self.exploration_decay, exploration_min=self.exploration_min, batch_size=self.batch_size, memory_size=self.memory_size)
 
     def add_workflow(self, workflow):
         self.workflows.append(workflow)
