@@ -1,9 +1,90 @@
 import random
 import numpy as np
 from collections import deque, defaultdict
+from graphviz import Digraph
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.optimizers import Adam
 from itertools import product
-from DQNAgent import DQNAgent
-from WorkflowParser import parse_dax
+
+class DQNAgent:
+    def __init__(self, state_size, action_size, learning_rate=0.001, discount_factor=0.95, exploration_rate=1.0,
+                 exploration_decay=0.995, exploration_min=0.01, batch_size=64, memory_size=2000):
+        self.state_size = state_size
+        self.action_size = action_size
+        self.learning_rate = learning_rate
+        self.discount_factor = discount_factor
+        self.exploration_rate = exploration_rate
+        self.exploration_decay = exploration_decay
+        self.exploration_min = exploration_min
+        self.batch_size = batch_size
+        self.memory = deque(maxlen=memory_size)
+        self.model = self._build_model()
+        self.target_model = self._build_model()
+        self.update_target_model()
+
+    def _build_model(self):
+        model = Sequential()
+        model.add(Dense(24, input_dim=self.state_size, activation='relu'))
+        model.add(Dense(24, activation='relu'))
+        model.add(Dense(self.action_size, activation='linear'))
+        model.compile(optimizer=Adam(learning_rate=self.learning_rate), loss='mse')
+        return model
+
+    def update_target_model(self):
+        self.target_model.set_weights(self.model.get_weights())
+
+    def remember(self, state, action, reward, next_state, done):
+        self.memory.append((state, action, reward, next_state, done))
+
+    def choose_action(self, state):
+        if np.random.rand() <= self.exploration_rate:
+            return random.randrange(self.action_size)
+        q_values = self.model.predict(state)
+        return np.argmax(q_values[0])
+
+    def replay(self):
+        if len(self.memory) < self.batch_size:
+            return
+        minibatch = random.sample(self.memory, self.batch_size)
+        for state, action, reward, next_state, done in minibatch:
+            target = self.model.predict(state)
+            if done:
+                target[0][action] = reward
+            else:
+                t = self.target_model.predict(next_state)
+                target[0][action] = reward + self.discount_factor * np.amax(t[0])
+            self.model.fit(state, target, epochs=1, verbose=0)
+        if self.exploration_rate > self.exploration_min:
+            self.exploration_rate *= self.exploration_decay
+
+class Task:
+    def __init__(self, id, instructions):
+        self.id = id
+        self.instructions = instructions
+        self.children = []
+        self.parents = []
+        self.executed = False
+        self.executed_on = None
+        self.execution_time = 0
+        self.cost = 0
+        self.comm_delay = 0  # Communication delay in seconds
+
+class Workflow:
+    def __init__(self, id):
+        self.id = id
+        self.tasks = {}
+
+    def add_task(self, task_id, instructions, parent_ids=[]):
+        if task_id not in self.tasks:
+            self.tasks[task_id] = Task(task_id, instructions)
+        task = self.tasks[task_id]
+        for parent_id in parent_ids:
+            if parent_id not in self.tasks:
+                self.tasks[parent_id] = Task(parent_id, 0)
+            parent_task = self.tasks[parent_id]
+            parent_task.children.append(task)
+            task.parents.append(parent_task)
 
 class Device:
     def __init__(self, id, mips, cost_per_hour):
@@ -123,18 +204,41 @@ class Simulation:
                     self.iot_agent.remember(state, action, reward, next_state, done)
                     self.iot_agent.replay()
 
-    def run_simulation(self, num_runs=100, dax_path='CyberShake_30.xml'):
+    def run_simulation(self, num_runs=100):
         total_delays = []
         total_costs = []
-
-        # Parse workflows from DAX file
-        workflow = parse_dax(dax_path)
-
         for _ in range(num_runs):
             self.reset()
 
-            # Add parsed workflow to simulation
-            self.add_workflow(workflow)
+            # Create workflows
+            workflow1 = Workflow(id='workflow_1')
+            workflow1.add_task(task_id='task_1', instructions=200e6)  # Root task
+            workflow1.add_task(task_id='task_2', instructions=590e6, parent_ids=['task_1'])
+            workflow1.add_task(task_id='task_3', instructions=300e6, parent_ids=['task_1'])
+            workflow1.add_task(task_id='task_4', instructions=400e6, parent_ids=['task_2'])
+            workflow1.add_task(task_id='task_5', instructions=250e6, parent_ids=['task_2', 'task_3'])
+
+            workflow2 = Workflow(id='workflow_2')
+            workflow2.add_task(task_id='task_1', instructions=350e6)  # Root task
+            workflow2.add_task(task_id='task_2', instructions=450e6, parent_ids=['task_1'])
+            workflow2.add_task(task_id='task_3', instructions=600e6, parent_ids=['task_1'])
+            workflow2.add_task(task_id='task_4', instructions=500e6, parent_ids=['task_2'])
+            workflow2.add_task(task_id='task_5', instructions=700e6, parent_ids=['task_3'])
+            workflow2.add_task(task_id='task_6', instructions=550e6, parent_ids=['task_4', 'task_5'])
+
+            workflow3 = Workflow(id='workflow_3')
+            workflow3.add_task(task_id='task_1', instructions=150e6)  # Root task
+            workflow3.add_task(task_id='task_2', instructions=250e6, parent_ids=['task_1'])
+            workflow3.add_task(task_id='task_3', instructions=400e6, parent_ids=['task_1'])
+            workflow3.add_task(task_id='task_4', instructions=450e6, parent_ids=['task_2'])
+            workflow3.add_task(task_id='task_5', instructions=500e6, parent_ids=['task_3'])
+            workflow3.add_task(task_id='task_6', instructions=350e6, parent_ids=['task_4', 'task_5'])
+            workflow3.add_task(task_id='task_7', instructions=600e6, parent_ids=['task_5'])
+            workflow3.add_task(task_id='task_8', instructions=300e6, parent_ids=['task_6', 'task_7'])
+
+            self.add_workflow(workflow1)
+            self.add_workflow(workflow2)
+            self.add_workflow(workflow3)
 
             # Run simulation
             self.simulate()
@@ -148,11 +252,11 @@ class Simulation:
         return mean_delay, mean_cost
 
 def hyperparameter_tuning(num_runs=100):
-    learning_rates = [0.001,0.0001]
-    discount_factors = [ 0.95]
-    exploration_rates = [0.5]
-    exploration_decays = [0.99]
-    exploration_mins = [ 0.05]
+    learning_rates = [0.001, 0.01, 0.1]
+    discount_factors = [0.8, 0.9, 0.95]
+    exploration_rates = [1.0, 0.5]
+    exploration_decays = [0.99, 0.995]
+    exploration_mins = [0.01, 0.05]
 
     best_mean_delay = float('inf')
     best_mean_cost = float('inf')
