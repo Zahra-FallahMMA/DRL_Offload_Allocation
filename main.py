@@ -1,150 +1,9 @@
-
 import random
 import numpy as np
 from collections import deque, defaultdict
-from graphviz import Digraph
-from keras.models import Sequential, load_model
-from keras.layers import Dense, Activation
-from keras.optimizers import Adam
 from itertools import product
-
-class ReplayBuffer(object):
-    def __init__(self, max_size, input_shape, n_actions, discrete=False):
-        self.mem_size = max_size
-        self.mem_cntr = 0
-        self.discrete = discrete
-        self.state_memory = np.zeros((self.mem_size, input_shape))
-        self.new_state_memory = np.zeros((self.mem_size, input_shape))
-        dtype = np.int8 if self.discrete else np.float32
-        self.action_memory = np.zeros((self.mem_size, n_actions), dtype=dtype)
-        self.reward_memory = np.zeros(self.mem_size)
-        self.terminal_memory = np.zeros(self.mem_size, dtype=np.float32)
-
-    def store_transition(self, state, action, reward, state_, done):
-        index = self.mem_cntr % self.mem_size
-        self.state_memory[index] = state
-        self.new_state_memory[index] = state_
-        # store one hot encoding of actions, if appropriate
-        if self.discrete:
-            actions = np.zeros(self.action_memory.shape[1])
-            actions[action] = 1.0
-            self.action_memory[index] = actions
-        else:
-            self.action_memory[index] = action
-        self.reward_memory[index] = reward
-        self.terminal_memory[index] = 1 - done
-        self.mem_cntr += 1
-
-    def sample_buffer(self, batch_size):
-        max_mem = min(self.mem_cntr, self.mem_size)
-        batch = np.random.choice(max_mem, batch_size)
-
-        states = self.state_memory[batch]
-        actions = self.action_memory[batch]
-        rewards = self.reward_memory[batch]
-        states_ = self.new_state_memory[batch]
-        terminal = self.terminal_memory[batch]
-
-        return states, actions, rewards, states_, terminal
-
-def build_dqn(lr, n_actions, input_dims, fc1_dims, fc2_dims):
-    model = Sequential([
-                Dense(fc1_dims, input_shape=(input_dims,)),
-                Activation('relu'),
-                Dense(fc2_dims),
-                Activation('relu'),
-                Dense(n_actions)])
-
-    model.compile(optimizer=Adam(lr=lr), loss='mse')
-
-    return model
-
-class DQNAgent(object):
-    def __init__(self, input_dims, n_actions, alpha=0.001, gamma=0.95, epsilon=1.0, epsilon_dec=0.995, epsilon_end=0.01, batch_size=64, mem_size=2000, fname='dqn_model.h5'):
-
-        self.action_space = [i for i in range(n_actions)]
-        self.gamma = gamma
-        self.epsilon = epsilon
-        self.epsilon_dec = epsilon_dec
-        self.epsilon_min = epsilon_end
-        self.batch_size = batch_size
-        self.model_file = fname
-        self.memory = ReplayBuffer(mem_size, input_dims, n_actions,
-                                   discrete=True)
-        self.q_eval = build_dqn(alpha, n_actions, input_dims, 256, 256)
-
-    def remember(self, state, action, reward, new_state, done):
-        self.memory.store_transition(state, action, reward, new_state, done)
-
-    def choose_action(self, state):
-        state = state[np.newaxis, :]
-        rand = np.random.random()
-        if rand < self.epsilon:
-            action = np.random.choice(self.action_space)
-        else:
-            actions = self.q_eval.predict(state)
-            action = np.argmax(actions)
-
-        return action
-
-    def learn(self):
-        if self.memory.mem_cntr > self.batch_size:
-            state, action, reward, new_state, done = \
-                                          self.memory.sample_buffer(self.batch_size)
-
-            action_values = np.array(self.action_space, dtype=np.int8)
-            action_indices = np.dot(action, action_values)
-
-            q_eval = self.q_eval.predict(state)
-
-            q_next = self.q_eval.predict(new_state)
-
-            q_target = q_eval.copy()
-
-            batch_index = np.arange(self.batch_size, dtype=np.int32)
-
-            q_target[batch_index, action_indices] = reward + \
-                                  self.gamma*np.max(q_next, axis=1)*done
-
-            _ = self.q_eval.fit(state, q_target, verbose=0)
-
-            self.epsilon = self.epsilon*self.epsilon_dec if self.epsilon > \
-                           self.epsilon_min else self.epsilon_min
-
-    def save_model(self):
-        self.q_eval.save(self.model_file)
-
-    def load_model(self):
-        self.q_eval = load_model(self.model_file)
-
-
-class Task:
-    def __init__(self, id, instructions):
-        self.id = id
-        self.instructions = instructions
-        self.children = []
-        self.parents = []
-        self.executed = False
-        self.executed_on = None
-        self.execution_time = 0
-        self.cost = 0
-        self.comm_delay = 0  # Communication delay in seconds
-
-class Workflow:
-    def __init__(self, id):
-        self.id = id
-        self.tasks = {}
-
-    def add_task(self, task_id, instructions, parent_ids=[]):
-        if task_id not in self.tasks:
-            self.tasks[task_id] = Task(task_id, instructions)
-        task = self.tasks[task_id]
-        for parent_id in parent_ids:
-            if parent_id not in self.tasks:
-                self.tasks[parent_id] = Task(parent_id, 0)
-            parent_task = self.tasks[parent_id]
-            parent_task.children.append(task)
-            task.parents.append(parent_task)
+from DQNAgent import DQNAgent
+from WorkflowParser import parse_dax
 
 class Device:
     def __init__(self, id, mips, cost_per_hour):
@@ -153,7 +12,8 @@ class Device:
         self.cost_per_hour = cost_per_hour
 
 class Simulation:
-    def __init__(self, num_iot, num_fog, num_server, learning_rate=0.001, discount_factor=0.95, exploration_rate=1.0, exploration_decay=0.995, exploration_min=0.01, batch_size=64, memory_size=2000):
+    def __init__(self, num_iot, num_fog, num_server, learning_rate=0.001, discount_factor=0.95,
+                 exploration_rate=1.0, exploration_decay=0.995, exploration_min=0.01, batch_size=64, memory_size=2000):
         self.num_iot = num_iot
         self.num_fog = num_fog
         self.num_server = num_server
@@ -174,8 +34,12 @@ class Simulation:
         self.total_cost = 0
         self.workflows = []
         self.ready_tasks = defaultdict(deque)
-        self.iot_agent = DQNAgent(state_size=3, action_size=2, learning_rate=self.learning_rate, discount_factor=self.discount_factor, exploration_rate=self.exploration_rate, exploration_decay=self.exploration_decay, exploration_min=self.exploration_min, batch_size=self.batch_size, memory_size=self.memory_size)
-        self.broker_agent = DQNAgent(state_size=4, action_size=2, learning_rate=self.learning_rate, discount_factor=self.discount_factor, exploration_rate=self.exploration_rate, exploration_decay=self.exploration_decay, exploration_min=self.exploration_min, batch_size=self.batch_size, memory_size=self.memory_size)
+        self.iot_agent = DQNAgent(state_size=3, action_size=2, learning_rate=self.learning_rate, discount_factor=self.discount_factor,
+                                  exploration_rate=self.exploration_rate, exploration_decay=self.exploration_decay,
+                                  exploration_min=self.exploration_min, batch_size=self.batch_size, memory_size=self.memory_size)
+        self.broker_agent = DQNAgent(state_size=4, action_size=2, learning_rate=self.learning_rate, discount_factor=self.discount_factor,
+                                     exploration_rate=self.exploration_rate, exploration_decay=self.exploration_decay,
+                                     exploration_min=self.exploration_min, batch_size=self.batch_size, memory_size=self.memory_size)
 
     def add_workflow(self, workflow):
         self.workflows.append(workflow)
@@ -259,41 +123,18 @@ class Simulation:
                     self.iot_agent.remember(state, action, reward, next_state, done)
                     self.iot_agent.replay()
 
-    def run_simulation(self, num_runs=100):
+    def run_simulation(self, num_runs=100, dax_path='CyberShake_30.xml'):
         total_delays = []
         total_costs = []
+
+        # Parse workflows from DAX file
+        workflow = parse_dax(dax_path)
+
         for _ in range(num_runs):
             self.reset()
 
-            # Create workflows
-            workflow1 = Workflow(id='workflow_1')
-            workflow1.add_task(task_id='task_1', instructions=200e6)  # Root task
-            workflow1.add_task(task_id='task_2', instructions=590e6, parent_ids=['task_1'])
-            workflow1.add_task(task_id='task_3', instructions=300e6, parent_ids=['task_1'])
-            workflow1.add_task(task_id='task_4', instructions=400e6, parent_ids=['task_2'])
-            workflow1.add_task(task_id='task_5', instructions=250e6, parent_ids=['task_2', 'task_3'])
-
-            workflow2 = Workflow(id='workflow_2')
-            workflow2.add_task(task_id='task_1', instructions=350e6)  # Root task
-            workflow2.add_task(task_id='task_2', instructions=450e6, parent_ids=['task_1'])
-            workflow2.add_task(task_id='task_3', instructions=600e6, parent_ids=['task_1'])
-            workflow2.add_task(task_id='task_4', instructions=500e6, parent_ids=['task_2'])
-            workflow2.add_task(task_id='task_5', instructions=700e6, parent_ids=['task_3'])
-            workflow2.add_task(task_id='task_6', instructions=550e6, parent_ids=['task_4', 'task_5'])
-
-            workflow3 = Workflow(id='workflow_3')
-            workflow3.add_task(task_id='task_1', instructions=150e6)  # Root task
-            workflow3.add_task(task_id='task_2', instructions=250e6, parent_ids=['task_1'])
-            workflow3.add_task(task_id='task_3', instructions=400e6, parent_ids=['task_1'])
-            workflow3.add_task(task_id='task_4', instructions=450e6, parent_ids=['task_2'])
-            workflow3.add_task(task_id='task_5', instructions=500e6, parent_ids=['task_3'])
-            workflow3.add_task(task_id='task_6', instructions=350e6, parent_ids=['task_4', 'task_5'])
-            workflow3.add_task(task_id='task_7', instructions=600e6, parent_ids=['task_5'])
-            workflow3.add_task(task_id='task_8', instructions=300e6, parent_ids=['task_6', 'task_7'])
-
-            self.add_workflow(workflow1)
-            self.add_workflow(workflow2)
-            self.add_workflow(workflow3)
+            # Add parsed workflow to simulation
+            self.add_workflow(workflow)
 
             # Run simulation
             self.simulate()
@@ -307,11 +148,11 @@ class Simulation:
         return mean_delay, mean_cost
 
 def hyperparameter_tuning(num_runs=100):
-    learning_rates = [0.001, 0.01, 0.1]
-    discount_factors = [0.8, 0.9, 0.95]
-    exploration_rates = [1.0, 0.5]
-    exploration_decays = [0.99, 0.995]
-    exploration_mins = [0.01, 0.05]
+    learning_rates = [0.001,0.0001]
+    discount_factors = [ 0.95]
+    exploration_rates = [0.5]
+    exploration_decays = [0.99]
+    exploration_mins = [ 0.05]
 
     best_mean_delay = float('inf')
     best_mean_cost = float('inf')
