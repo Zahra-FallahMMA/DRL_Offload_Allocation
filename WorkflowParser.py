@@ -1,4 +1,5 @@
 import xml.etree.ElementTree as ET
+from io import StringIO
 
 class Task:
     def __init__(self, id, instructions):
@@ -48,7 +49,45 @@ def parse_dax(file_path):
         child_id = child.attrib['ref']
         parent_ids = [parent.attrib['ref'] for parent in child.findall('{http://pegasus.isi.edu/schema/DAX}parent')]
         # Add task with its parents
-        for parent_id in parent_ids:
-            workflow.add_task(child_id, {}, parent_ids)
+        workflow.add_task(child_id, 0, parent_ids)  # Added 0 as instructions for child node because it shouldn't overwrite
 
     return workflow
+
+def print_dependencies(workflow):
+    for task_id, task in workflow.tasks.items():
+        parent_ids = [parent.id for parent in task.parents]
+        child_ids = [child.id for child in task.children]
+        print(f"Task {task_id}:")
+        print(f"  Parents: {parent_ids if parent_ids else 'None'}")
+        print(f"  Children: {child_ids if child_ids else 'None'}")
+        print("")
+
+'''
+# Test Code Begins Here
+def test_parse_dax_and_print_dependencies():
+    # Creating a mock DAX XML content
+    dax_content = """<?xml version="1.0" encoding="UTF-8"?>
+    <adag xmlns="http://pegasus.isi.edu/schema/DAX" name="test_workflow" index="0" count="1">
+        <job id="task_1" namespace="example" name="task1" version="1.0" runtime="100.0"/>
+        <job id="task_2" namespace="example" name="task2" version="1.0" runtime="200.0"/>
+        <job id="task_3" namespace="example" name="task3" version="1.0" runtime="300.0"/>
+        <child ref="task_2">
+            <parent ref="task_1"/>
+        </child>
+        <child ref="task_3">
+            <parent ref="task_2"/>
+        </child>
+    </adag>"""
+
+    # Using StringIO to simulate reading from file without actual file IO
+    dax_file_path = StringIO(dax_content)
+
+    # Parse the DAX content
+    workflow = parse_dax(dax_file_path)
+
+    # Print dependencies
+    print_dependencies(workflow)
+
+# Running the test
+test_parse_dax_and_print_dependencies()
+'''
